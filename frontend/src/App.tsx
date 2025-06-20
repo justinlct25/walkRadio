@@ -49,37 +49,35 @@ function MapUpdater({ currentCoordinate }: { currentCoordinate: Coordinate | nul
   return null;
 }
 
+// Walking state enum
+type WalkingState = 'stopped' | 'walking' | 'paused';
+
 function App() {
   const [routeUrl, setRouteUrl] = useState('');
   const [walkingPace, setWalkingPace] = useState(20);
-  const [isWalking, setIsWalking] = useState(false);
+  const [walkingState, setWalkingState] = useState<WalkingState>('stopped');
   const [coordinates, setCoordinates] = useState<Coordinate[]>([]);
   const [currentCoordinateIndex, setCurrentCoordinateIndex] = useState(0);
   const [aiResponses, setAiResponses] = useState<AIResponse[]>([]);
   const [currentCoordinate, setCurrentCoordinate] = useState<Coordinate | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>([51.505, -0.09]);
   const [mapZoom, setMapZoom] = useState(13);
-  const [isSimulationActive, setIsSimulationActive] = useState(false);
   const [isProcessingRoute, setIsProcessingRoute] = useState(false);
   const [isValidUrl, setIsValidUrl] = useState(true);
-  const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const simulationActiveRef = useRef<boolean>(false);
   const [showCoordinates, setShowCoordinates] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isApiCallInProgress, setIsApiCallInProgress] = useState(false);
-  const [lastProcessedIndex, setLastProcessedIndex] = useState(-1);
-  const [currentPosition, setCurrentPosition] = useState<{ lng: number; lat: number } | null>(null);
-  const [routeCoordinates, setRouteCoordinates] = useState<{ lng: number; lat: number }[]>([]);
-  const [walkingSpeed, setWalkingSpeed] = useState(5.56); // 20 km/h in m/s
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [progress, setProgress] = useState(0);
-  const [urlValidation, setUrlValidation] = useState<'valid' | 'invalid' | 'processing' | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isWalkingRef = useRef<boolean>(false);
-  const currentIndexRef = useRef<number>(0);
+  const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastResponseRef = useRef<string>('');
   const isApiCallInProgressRef = useRef<boolean>(false);
-  const lastProcessedIndexRef = useRef<number>(-1);
+  const walkingStateRef = useRef<WalkingState>('stopped');
+  const lastAiCallTimeRef = useRef<number>(0);
+  const totalDistanceTraveledRef = useRef<number>(0);
+  const [nextAiCallTime, setNextAiCallTime] = useState<number>(0);
+
+  // Update ref when state changes
+  useEffect(() => {
+    walkingStateRef.current = walkingState;
+  }, [walkingState]);
 
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
@@ -255,75 +253,6 @@ function App() {
     return R * c;
   };
 
-  // Find the closest coordinate from the coordinate list
-  const findClosestCoordinate = (targetCoord: Coordinate): { index: number, coordinate: Coordinate } => {
-    let closestIndex = 0;
-    let closestDistance = Infinity;
-    
-    for (let i = 0; i < coordinates.length; i++) {
-      const distance = calculateDistance(targetCoord, coordinates[i]);
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestIndex = i;
-      }
-    }
-    
-    console.log(`Closest coordinate found: index ${closestIndex}, distance ${closestDistance} meters`);
-    return { index: closestIndex, coordinate: coordinates[closestIndex] };
-  };
-
-  // Calculate where user would be after walking for given time
-  const calculatePositionAfterTime = (startIndex: number, timeSeconds: number): { index: number, coordinate: Coordinate } => {
-    if (coordinates.length === 0) return { index: 0, coordinate: coordinates[0] };
-    
-    const walkingSpeed = walkingPace / 3.6; // Convert km/h to m/s
-    const distanceToTravel = walkingSpeed * timeSeconds; // Distance in meters
-    
-    console.log(`Walking speed: ${walkingSpeed} m/s, Distance to travel: ${distanceToTravel} meters`);
-    console.log(`Starting from index: ${startIndex}`);
-    
-    // Calculate the total distance from start to current position
-    let totalDistanceFromStart = 0;
-    for (let i = 0; i < startIndex; i++) {
-      totalDistanceFromStart += calculateDistance(coordinates[i], coordinates[i + 1]);
-    }
-    
-    // Calculate target distance from start
-    const targetDistanceFromStart = totalDistanceFromStart + distanceToTravel;
-    
-    console.log(`Total distance from start: ${totalDistanceFromStart} meters`);
-    console.log(`Target distance from start: ${targetDistanceFromStart} meters`);
-    
-    // Find the coordinate closest to the target distance
-    let accumulatedDistance = 0;
-    for (let i = 0; i < coordinates.length - 1; i++) {
-      const segmentDistance = calculateDistance(coordinates[i], coordinates[i + 1]);
-      
-      if (accumulatedDistance + segmentDistance >= targetDistanceFromStart) {
-        // Interpolate between coordinates
-        const remainingDistance = targetDistanceFromStart - accumulatedDistance;
-        const progress = remainingDistance / segmentDistance;
-        
-        const coord1 = coordinates[i];
-        const coord2 = coordinates[i + 1];
-        const interpolatedCoord: Coordinate = {
-          lng: coord1.lng + (coord2.lng - coord1.lng) * progress,
-          lat: coord1.lat + (coord2.lat - coord1.lat) * progress
-        };
-        
-        console.log(`Interpolated position: ${interpolatedCoord.lat}, ${interpolatedCoord.lng}`);
-        
-        // Find the closest coordinate from the list
-        return findClosestCoordinate(interpolatedCoord);
-      }
-      
-      accumulatedDistance += segmentDistance;
-    }
-    
-    // If we've gone past all coordinates, return the last one
-    return { index: coordinates.length - 1, coordinate: coordinates[coordinates.length - 1] };
-  };
-
   // Send coordinate to AI with LangFlow API
   const sendCoordinateToAI = async (coord: Coordinate) => {
     // Prevent duplicate API calls
@@ -399,6 +328,91 @@ function App() {
     }
   };
 
+  // Update coordinate position every second based on current pace
+  const updateCoordinatePosition = () => {
+    if (walkingStateRef.current !== 'walking') {
+      return;
+    }
+
+    // Calculate distance to travel in 1 second
+    const walkingSpeed = walkingPace / 3.6; // Convert km/h to m/s
+    const distanceThisSecond = walkingSpeed; // Distance in meters per second
+    
+    // Add to total distance traveled
+    totalDistanceTraveledRef.current += distanceThisSecond;
+    
+    console.log(`=== COORDINATE UPDATE ===`);
+    console.log(`Walking speed: ${walkingSpeed} m/s, Distance this second: ${distanceThisSecond} meters`);
+    console.log(`Total distance traveled: ${totalDistanceTraveledRef.current} meters`);
+    
+    // Find the position along the route based on total distance traveled
+    let accumulatedDistance = 0;
+    for (let i = 0; i < coordinates.length - 1; i++) {
+      const segmentDistance = calculateDistance(coordinates[i], coordinates[i + 1]);
+      
+      if (accumulatedDistance + segmentDistance >= totalDistanceTraveledRef.current) {
+        // Interpolate between coordinates
+        const remainingDistance = totalDistanceTraveledRef.current - accumulatedDistance;
+        const progress = remainingDistance / segmentDistance;
+        
+        const coord1 = coordinates[i];
+        const coord2 = coordinates[i + 1];
+        const interpolatedCoord: Coordinate = {
+          lng: coord1.lng + (coord2.lng - coord1.lng) * progress,
+          lat: coord1.lat + (coord2.lat - coord1.lat) * progress
+        };
+        
+        console.log(`Interpolated position: ${interpolatedCoord.lat}, ${interpolatedCoord.lng} at segment ${i}`);
+        setCurrentCoordinate(interpolatedCoord);
+        setCurrentCoordinateIndex(i);
+        
+        // Check AI request with the current interpolated coordinate
+        checkAndSendAiRequest(interpolatedCoord);
+        return;
+      }
+      
+      accumulatedDistance += segmentDistance;
+    }
+    
+    // If we've gone past all coordinates, stop the simulation
+    console.log('Reached end of route, stopping simulation');
+    setWalkingState('stopped');
+    setCurrentCoordinate(coordinates[coordinates.length - 1]);
+    setCurrentCoordinateIndex(coordinates.length - 1);
+    if (walkingIntervalRef.current) {
+      clearInterval(walkingIntervalRef.current);
+      walkingIntervalRef.current = null;
+    }
+    if (coordinateIntervalRef.current) {
+      clearInterval(coordinateIntervalRef.current);
+      coordinateIntervalRef.current = null;
+    }
+  };
+
+  // Check if we should send AI request (every 20 seconds)
+  const checkAndSendAiRequest = (currentCoord?: Coordinate) => {
+    const currentTime = Date.now();
+    const timeSinceLastAiCall = currentTime - lastAiCallTimeRef.current;
+    
+    // Use the passed coordinate or fall back to state
+    const coordToUse = currentCoord || currentCoordinate;
+    
+    console.log(`AI check - Time since last call: ${timeSinceLastAiCall}ms, Current coordinate:`, coordToUse);
+    
+    if (timeSinceLastAiCall >= 20000 && coordToUse) { // 20 seconds
+      console.log('Sending AI request - 20 seconds have passed');
+      sendCoordinateToAI(coordToUse);
+      lastAiCallTimeRef.current = currentTime;
+      setNextAiCallTime(currentTime + 20000); // Set next AI call time
+    } else if (timeSinceLastAiCall >= 20000 && !coordToUse) {
+      console.log('20 seconds passed but no current coordinate available');
+    } else {
+      const remainingTime = 20000 - timeSinceLastAiCall;
+      console.log(`Waiting for AI request - ${remainingTime}ms remaining`);
+      setNextAiCallTime(lastAiCallTimeRef.current + 20000);
+    }
+  };
+
   // Start walking simulation
   const startWalking = () => {
     if (coordinates.length === 0) {
@@ -406,79 +420,129 @@ function App() {
       return;
     }
 
-    if (isSimulationActive) {
-      console.log('Simulation already active, not starting new one');
+    if (walkingState === 'walking') {
+      console.log('Already walking, not starting new simulation');
       return;
     }
 
-    // Clear any existing interval first
+    // Clear any existing intervals first
     if (walkingIntervalRef.current) {
-      console.log('Clearing existing interval before creating new one');
+      console.log('Clearing existing walking interval');
       clearInterval(walkingIntervalRef.current);
       walkingIntervalRef.current = null;
     }
+    if (coordinateIntervalRef.current) {
+      console.log('Clearing existing coordinate interval');
+      clearInterval(coordinateIntervalRef.current);
+      coordinateIntervalRef.current = null;
+    }
 
-    setIsWalking(true);
-    setIsSimulationActive(true);
-    simulationActiveRef.current = true;
+    setWalkingState('walking');
     setCurrentCoordinateIndex(0);
     setCurrentCoordinate(coordinates[0]);
     setAiResponses([]);
+    lastAiCallTimeRef.current = Date.now();
+    totalDistanceTraveledRef.current = 0; // Reset total distance traveled
+    setNextAiCallTime(Date.now() + 20000); // Set initial next AI call time
 
     // Send first coordinate immediately
     sendCoordinateToAI(coordinates[0]);
 
-    // Set up interval for walking simulation - every 20 seconds
-    const intervalMs = 20000; // 20 seconds
-    console.log('Creating new interval with ID:', Date.now());
-    walkingIntervalRef.current = setInterval(() => {
-      console.log('Interval executing, simulation active:', simulationActiveRef.current);
-      // Safety check: if simulation is not active, don't continue
-      if (!simulationActiveRef.current) {
-        console.log('Simulation not active, stopping execution');
-        return;
-      }
-      
-      setCurrentCoordinateIndex(prevIndex => {
-        console.log(`=== UPDATE ===`);
-        console.log('Current index before update:', prevIndex, 'Total coordinates:', coordinates.length);
-        
-        // Calculate where user would be after 20 seconds of walking
-        const newPosition = calculatePositionAfterTime(prevIndex, 20);
-        console.log('New position calculated:', newPosition);
-        
-        // Check if we've reached the end of the route
-        if (newPosition.index >= coordinates.length - 1) {
-          console.log('Reached end of route, stopping simulation');
-          setIsWalking(false);
-          setIsSimulationActive(false);
-          simulationActiveRef.current = false;
-          if (walkingIntervalRef.current) {
-            clearInterval(walkingIntervalRef.current);
-            walkingIntervalRef.current = null;
-          }
-          return coordinates.length - 1; // Stay at the last coordinate
-        }
-        
-        console.log('Moving to new position:', newPosition.coordinate);
-        setCurrentCoordinate(newPosition.coordinate);
-        sendCoordinateToAI(newPosition.coordinate);
-        return newPosition.index;
-      });
-    }, intervalMs);
+    // Set up interval for coordinate updates - every 1 second
+    console.log('Creating coordinate update interval - every 1 second');
+    coordinateIntervalRef.current = setInterval(() => {
+      updateCoordinatePosition();
+    }, 1000);
+  };
+
+  // Pause walking simulation
+  const pauseWalking = () => {
+    console.log('Pausing walking simulation');
+    setWalkingState('paused');
+    if (walkingIntervalRef.current) {
+      clearInterval(walkingIntervalRef.current);
+      walkingIntervalRef.current = null;
+    }
+    if (coordinateIntervalRef.current) {
+      clearInterval(coordinateIntervalRef.current);
+      coordinateIntervalRef.current = null;
+    }
+  };
+
+  // Continue walking simulation
+  const continueWalking = () => {
+    console.log('Continuing walking simulation');
+    if (walkingState !== 'paused') {
+      console.log('Not paused, cannot continue');
+      return;
+    }
+
+    setWalkingState('walking');
+    
+    // Set up interval for coordinate updates - every 1 second
+    console.log('Creating coordinate update interval - every 1 second');
+    coordinateIntervalRef.current = setInterval(() => {
+      updateCoordinatePosition();
+    }, 1000);
   };
 
   // Stop walking simulation
   const stopWalking = () => {
     console.log('Stopping walking simulation');
-    setIsWalking(false);
-    setIsSimulationActive(false);
-    simulationActiveRef.current = false;
+    setWalkingState('stopped');
     if (walkingIntervalRef.current) {
       clearInterval(walkingIntervalRef.current);
       walkingIntervalRef.current = null;
     }
+    if (coordinateIntervalRef.current) {
+      clearInterval(coordinateIntervalRef.current);
+      coordinateIntervalRef.current = null;
+    }
   };
+
+  // Get button text and action based on current state
+  const getButtonConfig = () => {
+    switch (walkingState) {
+      case 'stopped':
+        return {
+          primaryText: 'Start Walking',
+          primaryAction: startWalking,
+          primaryClass: 'start',
+          secondaryText: null,
+          secondaryAction: null,
+          secondaryClass: null
+        };
+      case 'walking':
+        return {
+          primaryText: 'Pause',
+          primaryAction: pauseWalking,
+          primaryClass: 'pause',
+          secondaryText: 'Stop',
+          secondaryAction: stopWalking,
+          secondaryClass: 'stop'
+        };
+      case 'paused':
+        return {
+          primaryText: 'Continue',
+          primaryAction: continueWalking,
+          primaryClass: 'continue',
+          secondaryText: 'Stop',
+          secondaryAction: stopWalking,
+          secondaryClass: 'stop'
+        };
+      default:
+        return {
+          primaryText: 'Start Walking',
+          primaryAction: startWalking,
+          primaryClass: 'start',
+          secondaryText: null,
+          secondaryAction: null,
+          secondaryClass: null
+        };
+    }
+  };
+
+  const buttonConfig = getButtonConfig();
 
   // Cleanup on unmount
   useEffect(() => {
@@ -487,9 +551,19 @@ function App() {
         clearInterval(walkingIntervalRef.current);
         walkingIntervalRef.current = null;
       }
-      simulationActiveRef.current = false;
+      if (coordinateIntervalRef.current) {
+        clearInterval(coordinateIntervalRef.current);
+        coordinateIntervalRef.current = null;
+      }
     };
   }, []);
+
+  // Handle pace changes - update the walking speed dynamically
+  useEffect(() => {
+    console.log(`Walking pace updated to: ${walkingPace} km/h`);
+    // The pace change will be automatically reflected in the next coordinate calculation
+    // since updateCoordinatePosition uses the current walkingPace value
+  }, [walkingPace]);
 
   return (
     <div className="App">
@@ -545,13 +619,62 @@ function App() {
             <small>Prompts are sent every 20 seconds. Position is calculated based on your walking pace. Range: 0.1 - 50 km/h</small>
           </div>
 
+          {/* Walking Status Display */}
+          <div className="walking-status">
+            <h3>Walking Status</h3>
+            <div className="status-grid">
+              <div className="status-item">
+                <span className="status-label">State:</span>
+                <span className={`status-value status-${walkingState}`}>
+                  {walkingState.charAt(0).toUpperCase() + walkingState.slice(1)}
+                </span>
+              </div>
+              <div className="status-item">
+                <span className="status-label">Current Pace:</span>
+                <span className="status-value">{walkingPace} km/h</span>
+              </div>
+              <div className="status-item">
+                <span className="status-label">Coordinate Updates:</span>
+                <span className="status-value">Every 1 second</span>
+              </div>
+              <div className="status-item">
+                <span className="status-label">AI Updates:</span>
+                <span className="status-value">Every 20 seconds</span>
+              </div>
+              {walkingState === 'walking' && nextAiCallTime > 0 && (
+                <div className="status-item">
+                  <span className="status-label">Next AI Call:</span>
+                  <span className="status-value">
+                    {Math.max(0, Math.ceil((nextAiCallTime - Date.now()) / 1000))}s
+                  </span>
+                </div>
+              )}
+              {currentCoordinate && (
+                <div className="status-item">
+                  <span className="status-label">Current Position:</span>
+                  <span className="status-value">
+                    {currentCoordinate.lat.toFixed(6)}, {currentCoordinate.lng.toFixed(6)}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="control-buttons">
             <button
-              onClick={isWalking ? stopWalking : startWalking}
-              className={`walk-btn ${isWalking ? 'stop' : 'start'}`}
+              onClick={buttonConfig.primaryAction}
+              className={`walk-btn ${buttonConfig.primaryClass}`}
             >
-              {isWalking ? 'Stop Walking' : 'Start Walking'}
+              {buttonConfig.primaryText}
             </button>
+            {buttonConfig.secondaryText && (
+              <button
+                onClick={buttonConfig.secondaryAction}
+                className={`walk-btn ${buttonConfig.secondaryClass}`}
+              >
+                {buttonConfig.secondaryText}
+              </button>
+            )}
           </div>
         </div>
 

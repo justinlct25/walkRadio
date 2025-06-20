@@ -122,13 +122,15 @@
     cursor: not-allowed;
 }
 
-.button-group {
-    text-align: center;
+.control-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
     margin-top: 2rem;
+    flex-wrap: wrap;
 }
 
-.start-btn,
-.stop-btn {
+.walk-btn {
     padding: 1rem 2rem;
     font-size: 1.1rem;
     font-weight: 600;
@@ -136,36 +138,59 @@
     border-radius: 12px;
     cursor: pointer;
     transition: all 0.2s ease;
-    min-width: 200px;
+    min-width: 140px;
+    text-transform: capitalize;
 }
 
-.start-btn {
+.walk-btn.start {
     background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
     color: white;
     box-shadow: 0 4px 16px rgba(72, 187, 120, 0.3);
 }
 
-.start-btn:hover:not(:disabled) {
+.walk-btn.start:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(72, 187, 120, 0.4);
 }
 
-.start-btn:disabled {
-    background: #cbd5e0;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
+.walk-btn.pause {
+    background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+    color: white;
+    box-shadow: 0 4px 16px rgba(237, 137, 54, 0.3);
 }
 
-.stop-btn {
+.walk-btn.pause:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(237, 137, 54, 0.4);
+}
+
+.walk-btn.continue {
+    background: linear-gradient(135deg, #4299e1 0%, #3182ce 100%);
+    color: white;
+    box-shadow: 0 4px 16px rgba(66, 153, 225, 0.3);
+}
+
+.walk-btn.continue:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(66, 153, 225, 0.4);
+}
+
+.walk-btn.stop {
     background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
     color: white;
     box-shadow: 0 4px 16px rgba(245, 101, 101, 0.3);
 }
 
-.stop-btn:hover {
+.walk-btn.stop:hover:not(:disabled) {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(245, 101, 101, 0.4);
+}
+
+.walk-btn:disabled {
+    background: #cbd5e0;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
 }
 
 .walking-status {
@@ -181,12 +206,52 @@
 .walking-status h3 {
     margin: 0 0 1rem 0;
     color: #2d3748;
+    font-size: 1.2rem;
+    font-weight: 600;
 }
 
-.walking-status p {
-    margin: 0.5rem 0;
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    text-align: left;
+}
+
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    background: rgba(72, 187, 120, 0.1);
+    border-radius: 8px;
+    border-left: 3px solid #48bb78;
+}
+
+.status-label {
+    font-weight: 600;
+    color: #2d3748;
+    font-size: 0.9rem;
+}
+
+.status-value {
+    font-weight: 500;
     color: #4a5568;
-    font-size: 1rem;
+    font-size: 0.9rem;
+}
+
+.status-value.status-walking {
+    color: #38a169;
+    font-weight: 600;
+}
+
+.status-value.status-paused {
+    color: #ed8936;
+    font-weight: 600;
+}
+
+.status-value.status-stopped {
+    color: #e53e3e;
+    font-weight: 600;
 }
 
 .coordinates-section,
@@ -338,6 +403,23 @@
         align-items: flex-start;
     }
     .coordinate {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+    .control-buttons {
+        flex-direction: column;
+        align-items: center;
+    }
+    .walk-btn {
+        width: 100%;
+        max-width: 300px;
+    }
+    .status-grid {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    .status-item {
         flex-direction: column;
         align-items: flex-start;
         gap: 0.25rem;
