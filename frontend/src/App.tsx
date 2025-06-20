@@ -65,6 +65,7 @@ function App() {
   const [isProcessingRoute, setIsProcessingRoute] = useState(false);
   const [isValidUrl, setIsValidUrl] = useState(true);
   const [showCoordinates, setShowCoordinates] = useState(false);
+  const [showWalkingStatus, setShowWalkingStatus] = useState(false);
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastResponseRef = useRef<string>('');
@@ -72,12 +73,19 @@ function App() {
   const walkingStateRef = useRef<WalkingState>('stopped');
   const lastAiCallTimeRef = useRef<number>(0);
   const totalDistanceTraveledRef = useRef<number>(0);
+  const currentPaceRef = useRef<number>(20);
   const [nextAiCallTime, setNextAiCallTime] = useState<number>(0);
 
   // Update ref when state changes
   useEffect(() => {
     walkingStateRef.current = walkingState;
   }, [walkingState]);
+
+  // Update pace ref when walking pace changes
+  useEffect(() => {
+    currentPaceRef.current = walkingPace;
+    console.log(`Walking pace updated to: ${walkingPace} km/h`);
+  }, [walkingPace]);
 
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
@@ -267,7 +275,7 @@ function App() {
       console.log('Sending coordinate to LangFlow:', coord);
       
       const payload = {
-        "input_value": `I am walking at ${walkingPace} km/h and currently at coordinates ${coord.lat}, ${coord.lng}. What should I know about this location or any interesting things around here?`,
+        "input_value": `I am walking at ${currentPaceRef.current} km/h and currently at coordinates ${coord.lat}, ${coord.lng}. What should I know about this location or any interesting things around here?`,
         "output_type": "chat",
         "input_type": "chat",
         "session_id": "walkradio_user"
@@ -334,15 +342,15 @@ function App() {
       return;
     }
 
-    // Calculate distance to travel in 1 second
-    const walkingSpeed = walkingPace / 3.6; // Convert km/h to m/s
+    // Calculate distance to travel in 1 second using the current pace ref
+    const walkingSpeed = currentPaceRef.current / 3.6; // Convert km/h to m/s
     const distanceThisSecond = walkingSpeed; // Distance in meters per second
     
     // Add to total distance traveled
     totalDistanceTraveledRef.current += distanceThisSecond;
     
     console.log(`=== COORDINATE UPDATE ===`);
-    console.log(`Walking speed: ${walkingSpeed} m/s, Distance this second: ${distanceThisSecond} meters`);
+    console.log(`Current pace: ${currentPaceRef.current} km/h, Walking speed: ${walkingSpeed} m/s, Distance this second: ${distanceThisSecond} meters`);
     console.log(`Total distance traveled: ${totalDistanceTraveledRef.current} meters`);
     
     // Find the position along the route based on total distance traveled
@@ -558,13 +566,6 @@ function App() {
     };
   }, []);
 
-  // Handle pace changes - update the walking speed dynamically
-  useEffect(() => {
-    console.log(`Walking pace updated to: ${walkingPace} km/h`);
-    // The pace change will be automatically reflected in the next coordinate calculation
-    // since updateCoordinatePosition uses the current walkingPace value
-  }, [walkingPace]);
-
   return (
     <div className="App">
       <header className="App-header">
@@ -605,59 +606,88 @@ function App() {
           </div>
 
           <div className="input-group">
-            <label htmlFor="walkingPace">Walking Pace (km/h) - for AI context only:</label>
-            <input
-              id="walkingPace"
-              type="number"
-              value={walkingPace}
-              onChange={(e) => setWalkingPace(Number(e.target.value))}
-              min="0.1"
-              max="50"
-              step="0.1"
-              className="pace-input"
-            />
-            <small>Prompts are sent every 20 seconds. Position is calculated based on your walking pace. Range: 0.1 - 50 km/h</small>
+            <label htmlFor="walkingPace">Walking Pace (km/h):</label>
+            <div className="pace-input-container">
+              <button 
+                type="button" 
+                className="pace-btn pace-down"
+                onClick={() => setWalkingPace(prev => Math.max(0.5, prev - 0.5))}
+                disabled={walkingPace <= 0.5}
+              >
+                -
+              </button>
+              <input
+                id="walkingPace"
+                type="number"
+                value={walkingPace}
+                onChange={(e) => setWalkingPace(Number(e.target.value))}
+                min="0.5"
+                max="50"
+                step="0.5"
+                className="pace-input"
+                placeholder="20.0"
+              />
+              <span className="pace-unit">km/h</span>
+              <button 
+                type="button" 
+                className="pace-btn pace-up"
+                onClick={() => setWalkingPace(prev => Math.min(50, prev + 0.5))}
+                disabled={walkingPace >= 50}
+              >
+                +
+              </button>
+            </div>
           </div>
 
           {/* Walking Status Display */}
-          <div className="walking-status">
-            <h3>Walking Status</h3>
-            <div className="status-grid">
-              <div className="status-item">
-                <span className="status-label">State:</span>
-                <span className={`status-value status-${walkingState}`}>
-                  {walkingState.charAt(0).toUpperCase() + walkingState.slice(1)}
-                </span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Current Pace:</span>
-                <span className="status-value">{walkingPace} km/h</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">Coordinate Updates:</span>
-                <span className="status-value">Every 1 second</span>
-              </div>
-              <div className="status-item">
-                <span className="status-label">AI Updates:</span>
-                <span className="status-value">Every 20 seconds</span>
-              </div>
-              {walkingState === 'walking' && nextAiCallTime > 0 && (
-                <div className="status-item">
-                  <span className="status-label">Next AI Call:</span>
-                  <span className="status-value">
-                    {Math.max(0, Math.ceil((nextAiCallTime - Date.now()) / 1000))}s
-                  </span>
+          <div className="walking-status-dropdown">
+            <button 
+              className="dropdown-toggle"
+              onClick={() => setShowWalkingStatus(!showWalkingStatus)}
+            >
+              Walking Status {showWalkingStatus ? '▼' : '▶'}
+            </button>
+            {showWalkingStatus && (
+              <div className="walking-status">
+                <h3>Walking Status</h3>
+                <div className="status-grid">
+                  <div className="status-item">
+                    <span className="status-label">State:</span>
+                    <span className={`status-value status-${walkingState}`}>
+                      {walkingState.charAt(0).toUpperCase() + walkingState.slice(1)}
+                    </span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">Current Pace:</span>
+                    <span className="status-value">{walkingPace} km/h</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">Coordinate Updates:</span>
+                    <span className="status-value">Every 1 second</span>
+                  </div>
+                  <div className="status-item">
+                    <span className="status-label">AI Updates:</span>
+                    <span className="status-value">Every 20 seconds</span>
+                  </div>
+                  {walkingState === 'walking' && nextAiCallTime > 0 && (
+                    <div className="status-item">
+                      <span className="status-label">Next AI Call:</span>
+                      <span className="status-value">
+                        {Math.max(0, Math.ceil((nextAiCallTime - Date.now()) / 1000))}s
+                      </span>
+                    </div>
+                  )}
+                  {currentCoordinate && (
+                    <div className="status-item">
+                      <span className="status-label">Current Position:</span>
+                      <span className="status-value">
+                        {currentCoordinate.lat.toFixed(6)}, {currentCoordinate.lng.toFixed(6)}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {currentCoordinate && (
-                <div className="status-item">
-                  <span className="status-label">Current Position:</span>
-                  <span className="status-value">
-                    {currentCoordinate.lat.toFixed(6)}, {currentCoordinate.lng.toFixed(6)}
-                  </span>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           <div className="control-buttons">

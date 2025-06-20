@@ -714,3 +714,111 @@
     border-left-color: #2196f3;
     font-weight: 600;
 }
+
+.pace-input-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.pace-btn {
+    width: 40px;
+    height: 40px;
+    border: 2px solid #e2e8f0;
+    background: white;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.pace-btn:hover:not(:disabled) {
+    border-color: #667eea;
+    background: #f7fafc;
+}
+
+.pace-btn:disabled {
+    background: #f7fafc;
+    color: #a0aec0;
+    cursor: not-allowed;
+    border-color: #e2e8f0;
+}
+
+.pace-input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.pace-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.pace-unit {
+    font-weight: 600;
+    color: #4a5568;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    min-width: 50px;
+}
+
+.walking-status-dropdown {
+    margin-bottom: 2rem;
+}
+
+.walking-status-dropdown .dropdown-toggle {
+    width: 100%;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.95);
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #2d3748;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.walking-status-dropdown .dropdown-toggle:hover {
+    border-color: #667eea;
+    background: rgba(255, 255, 255, 1);
+}
+
+.walking-status-dropdown .walking-status {
+    margin-top: 1rem;
+    border-radius: 12px;
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid #48bb78;
+}
+
+@media (max-width: 768px) {
+    .pace-input-container {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .pace-btn {
+        width: 100%;
+        height: 40px;
+    }
+    .pace-unit {
+        text-align: center;
+    }
+}
