@@ -60,13 +60,26 @@ function App() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([51.505, -0.09]);
   const [mapZoom, setMapZoom] = useState(13);
   const [isSimulationActive, setIsSimulationActive] = useState(false);
-  const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
-  const [updateCounter, setUpdateCounter] = useState(0);
   const [isProcessingRoute, setIsProcessingRoute] = useState(false);
   const [isValidUrl, setIsValidUrl] = useState(true);
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const simulationActiveRef = useRef<boolean>(false);
   const [showCoordinates, setShowCoordinates] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isApiCallInProgress, setIsApiCallInProgress] = useState(false);
+  const [lastProcessedIndex, setLastProcessedIndex] = useState(-1);
+  const [currentPosition, setCurrentPosition] = useState<{ lng: number; lat: number } | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<{ lng: number; lat: number }[]>([]);
+  const [walkingSpeed, setWalkingSpeed] = useState(5.56); // 20 km/h in m/s
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [urlValidation, setUrlValidation] = useState<'valid' | 'invalid' | 'processing' | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isWalkingRef = useRef<boolean>(false);
+  const currentIndexRef = useRef<number>(0);
+  const lastResponseRef = useRef<string>('');
+  const isApiCallInProgressRef = useRef<boolean>(false);
+  const lastProcessedIndexRef = useRef<number>(-1);
 
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
@@ -313,6 +326,14 @@ function App() {
 
   // Send coordinate to AI with LangFlow API
   const sendCoordinateToAI = async (coord: Coordinate) => {
+    // Prevent duplicate API calls
+    if (isApiCallInProgressRef.current) {
+      console.log('API call already in progress, skipping...');
+      return;
+    }
+    
+    isApiCallInProgressRef.current = true;
+    
     try {
       console.log('Sending coordinate to LangFlow:', coord);
       
@@ -341,7 +362,7 @@ function App() {
       console.log('LangFlow response:', data);
 
       let aiMessage = 'No response from AI';
-      
+
       if (data.outputs && data.outputs.length > 0) {
         const output = data.outputs[0];
         
@@ -355,14 +376,12 @@ function App() {
         timestamp: new Date().toLocaleTimeString(),
         message: aiMessage
       };
-
-      // Check if this response already exists to prevent duplicates
-      const isDuplicate = aiResponses.some(existing => 
-        existing.timestamp === newResponse.timestamp && 
-        existing.message === newResponse.message
-      );
+      
+      // Check if this is a duplicate of the last response
+      const isDuplicate = lastResponseRef.current === aiMessage;
 
       if (!isDuplicate) {
+        lastResponseRef.current = aiMessage;
         setAiResponses(prev => [newResponse, ...prev]);
         console.log('AI response received:', newResponse.message);
       } else {
@@ -375,6 +394,8 @@ function App() {
         message: `Error: ${error instanceof Error ? error.message : 'Unknown error'} - Make sure LangFlow is running on localhost:7860`
       };
       setAiResponses(prev => [errorResponse, ...prev]);
+    } finally {
+      isApiCallInProgressRef.current = false;
     }
   };
 
@@ -402,8 +423,6 @@ function App() {
     simulationActiveRef.current = true;
     setCurrentCoordinateIndex(0);
     setCurrentCoordinate(coordinates[0]);
-    setLastUpdateTime(new Date().toLocaleTimeString());
-    setUpdateCounter(0);
     setAiResponses([]);
 
     // Send first coordinate immediately
@@ -421,7 +440,7 @@ function App() {
       }
       
       setCurrentCoordinateIndex(prevIndex => {
-        console.log(`=== UPDATE #${updateCounter + 1} ===`);
+        console.log(`=== UPDATE ===`);
         console.log('Current index before update:', prevIndex, 'Total coordinates:', coordinates.length);
         
         // Calculate where user would be after 20 seconds of walking
@@ -443,8 +462,6 @@ function App() {
         
         console.log('Moving to new position:', newPosition.coordinate);
         setCurrentCoordinate(newPosition.coordinate);
-        setLastUpdateTime(new Date().toLocaleTimeString());
-        setUpdateCounter(prev => prev + 1);
         sendCoordinateToAI(newPosition.coordinate);
         return newPosition.index;
       });
