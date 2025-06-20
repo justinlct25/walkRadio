@@ -239,7 +239,6 @@ function App() {
       }
     } catch (error) {
       console.error('Error processing route URL:', error);
-      setIsValidUrl(false);
     } finally {
       setIsProcessingRoute(false);
     }
