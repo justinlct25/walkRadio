@@ -36,15 +36,29 @@ const startIcon = createCustomIcon('#4CAF50');
 const endIcon = createCustomIcon('#F44336');
 const currentIcon = createCustomIcon('#2196F3');
 
-// Component to center map on current coordinate
-function MapUpdater({ currentCoordinate }: { currentCoordinate: Coordinate | null }) {
+// Component to handle map clicks
+function MapClickHandler({ 
+  onMapClick, 
+  isMapSelectionMode 
+}: { 
+  onMapClick: (event: L.LeafletMouseEvent) => void;
+  isMapSelectionMode: boolean;
+}) {
   const map = useMap();
   
   useEffect(() => {
-    if (currentCoordinate) {
-      map.setView([currentCoordinate.lat, currentCoordinate.lng], 15);
-    }
-  }, [currentCoordinate, map]);
+    if (!isMapSelectionMode) return;
+    
+    const handleClick = (event: L.LeafletMouseEvent) => {
+      onMapClick(event);
+    };
+    
+    map.on('click', handleClick);
+    
+    return () => {
+      map.off('click', handleClick);
+    };
+  }, [map, onMapClick, isMapSelectionMode]);
   
   return null;
 }
@@ -66,6 +80,10 @@ function App() {
   const [isValidUrl, setIsValidUrl] = useState(true);
   const [showCoordinates, setShowCoordinates] = useState(false);
   const [showWalkingStatus, setShowWalkingStatus] = useState(false);
+  const [isMapSelectionMode, setIsMapSelectionMode] = useState(false);
+  const [selectedStartPoint, setSelectedStartPoint] = useState<Coordinate | null>(null);
+  const [selectedEndPoint, setSelectedEndPoint] = useState<Coordinate | null>(null);
+  const [mapSelectionStep, setMapSelectionStep] = useState<'start' | 'end'>('start');
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastResponseRef = useRef<string>('');
@@ -260,6 +278,23 @@ function App() {
     return R * c;
   };
 
+  // Calculate bearing between two coordinates
+  const calculateBearing = (coord1: Coordinate, coord2: Coordinate): number => {
+    const Δλ = (coord2.lng - coord1.lng) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(coord2.lat * Math.PI / 180);
+    const x = Math.cos(coord1.lat * Math.PI / 180) * Math.sin(coord2.lat * Math.PI / 180) -
+              Math.sin(coord1.lat * Math.PI / 180) * Math.cos(coord2.lat * Math.PI / 180) * Math.cos(Δλ);
+    const bearing = Math.atan2(y, x);
+    return (bearing * 180 / Math.PI + 360) % 360;
+  };
+
+  // Get direction name based on bearing
+  const getDirectionName = (bearing: number): string => {
+    const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const index = Math.round(bearing / 45) % 8;
+    return directions[index];
+  };
+
   // Send coordinate to AI with LangFlow API
   const sendCoordinateToAI = async (coord: Coordinate) => {
     // Prevent duplicate API calls
@@ -273,8 +308,44 @@ function App() {
     try {
       console.log('Sending coordinate to LangFlow:', coord);
       
+      // Determine walking context
+      let walkingContext = '';
+      let directionInfo = '';
+      
+      // Check if this is start, end, or during walking
+      if (currentCoordinateIndex === 0) {
+        walkingContext = 'START of route';
+      } else if (currentCoordinateIndex >= coordinates.length - 1) {
+        walkingContext = 'END of route';
+      } else {
+        walkingContext = 'WALKING along route';
+        
+        // Calculate direction and turning information
+        const prevCoord = coordinates[currentCoordinateIndex - 1];
+        const currentCoord = coord;
+        const nextCoord = coordinates[currentCoordinateIndex + 1];
+        
+        // Calculate current direction (bearing)
+        const currentBearing = calculateBearing(prevCoord, currentCoord);
+        const nextBearing = calculateBearing(currentCoord, nextCoord);
+        
+        // Determine direction name
+        const directionName = getDirectionName(currentBearing);
+        
+        // Check if turning
+        const bearingDiff = Math.abs(nextBearing - currentBearing);
+        let turningInfo = '';
+        
+        if (bearingDiff > 30) {
+          const turnDirection = nextBearing > currentBearing ? 'right' : 'left';
+          turningInfo = `, turning ${turnDirection}`;
+        }
+        
+        directionInfo = `, heading ${directionName}${turningInfo}`;
+      }
+      
       const payload = {
-        "input_value": `I am walking at ${currentPaceRef.current} km/h and currently at coordinates ${coord.lat}, ${coord.lng}. What should I know about this location or any interesting things around here?`,
+        "input_value": `Current coordinates: ${coord.lat}, ${coord.lng}. Walking pace: ${currentPaceRef.current} km/h. Status: ${walkingContext}. Last direction: ${directionInfo}.`,
         "output_type": "chat",
         "input_type": "chat",
         "session_id": "walkradio_user"
@@ -565,6 +636,61 @@ function App() {
     };
   }, []);
 
+  // Handle map click for point selection
+  const handleMapClick = (event: L.LeafletMouseEvent) => {
+    if (!isMapSelectionMode) return;
+    
+    const { lat, lng } = event.latlng;
+    const clickedCoord: Coordinate = { lat, lng };
+    
+    if (mapSelectionStep === 'start') {
+      setSelectedStartPoint(clickedCoord);
+      setMapSelectionStep('end');
+      console.log('Start point selected:', clickedCoord);
+    } else {
+      setSelectedEndPoint(clickedCoord);
+      setMapSelectionStep('start');
+      console.log('End point selected:', clickedCoord);
+      
+      // Generate route from selected points
+      if (selectedStartPoint) {
+        generateRouteFromPoints(selectedStartPoint, clickedCoord);
+      }
+    }
+  };
+
+  // Generate route from selected start and end points
+  const generateRouteFromPoints = async (start: Coordinate, end: Coordinate) => {
+    try {
+      setIsProcessingRoute(true);
+      console.log('Generating route from selected points:', start, 'to', end);
+      
+      // Get full route from OSRM
+      const fullRoute = await getOSRMRoute(start, end);
+      setCoordinates(fullRoute);
+      
+      // Update map center to the start point
+      if (fullRoute.length > 0) {
+        setMapCenter([fullRoute[0].lat, fullRoute[0].lng]);
+        setMapZoom(15);
+      }
+      
+      console.log('Route generated successfully:', fullRoute.length, 'coordinates');
+    } catch (error) {
+      console.error('Error generating route from points:', error);
+    } finally {
+      setIsProcessingRoute(false);
+    }
+  };
+
+  // Reset map selection
+  const resetMapSelection = () => {
+    setSelectedStartPoint(null);
+    setSelectedEndPoint(null);
+    setMapSelectionStep('start');
+    setIsMapSelectionMode(false);
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -574,35 +700,105 @@ function App() {
       <div className="main-container">
         {/* Input Section */}
         <div className="input-section">
-          <div className="input-group">
-            <label htmlFor="routeUrl">Route URL (BRouter):</label>
-            <div className="brouter-help">
-              <p>Create your route at <a href="https://brouter.damsy.net/" target="_blank" rel="noopener noreferrer">BRouter Map</a></p>
-              <small>1. Go to BRouter Map 2. Draw your route 3. Copy the URL 4. Paste it here</small>
+          {/* Route Selection Method */}
+          <div className="route-method-selector">
+            <div className="method-tabs">
+              <button
+                type="button"
+                className={`method-tab ${!isMapSelectionMode ? 'active' : ''}`}
+                onClick={() => {
+                  setIsMapSelectionMode(false);
+                  resetMapSelection();
+                }}
+              >
+                Paste BRouter URL
+              </button>
+              <button
+                type="button"
+                className={`method-tab ${isMapSelectionMode ? 'active' : ''}`}
+                onClick={() => {
+                  setIsMapSelectionMode(true);
+                  setMapSelectionStep('start');
+                }}
+              >
+                Select on Map
+              </button>
             </div>
-            <input
-              id="routeUrl"
-              type="text"
-              value={routeUrl}
-              onChange={handleUrlChange}
-              onPaste={(e) => {
-                const pastedText = e.clipboardData.getData('text');
-                setRouteUrl(pastedText);
-                
-                // Validate and process immediately on paste
-                const isValid = validateBRouterUrl(pastedText);
-                setIsValidUrl(isValid);
-                
-                if (isValid && !isProcessingRoute) {
-                  setTimeout(() => {
-                    processRouteUrl();
-                  }, 100);
-                }
-              }}
-              placeholder="https://brouter.damsy.net/..."
-              className={`route-input ${!isValidUrl && routeUrl.trim() !== '' ? 'invalid-url' : ''} ${isProcessingRoute ? 'processing' : ''}`}
-            />
           </div>
+
+          {/* URL Input Method */}
+          {!isMapSelectionMode && (
+            <div className="input-group">
+              <label htmlFor="routeUrl">BRouter Route URL:</label>
+              <div className="brouter-help">
+                <p>Create your route at <a href="https://brouter.damsy.net/" target="_blank" rel="noopener noreferrer">BRouter Map</a></p>
+                <small>1. Go to BRouter Map 2. Draw your route 3. Copy the URL 4. Paste it here</small>
+              </div>
+              <input
+                id="routeUrl"
+                type="text"
+                value={routeUrl}
+                onChange={handleUrlChange}
+                onPaste={(e) => {
+                  const pastedText = e.clipboardData.getData('text');
+                  setRouteUrl(pastedText);
+                  
+                  // Validate and process immediately on paste
+                  const isValid = validateBRouterUrl(pastedText);
+                  setIsValidUrl(isValid);
+                  
+                  if (isValid && !isProcessingRoute) {
+                    setTimeout(() => {
+                      processRouteUrl();
+                    }, 100);
+                  }
+                }}
+                placeholder="https://brouter.damsy.net/..."
+                className={`route-input ${!isValidUrl && routeUrl.trim() !== '' ? 'invalid-url' : ''} ${isProcessingRoute ? 'processing' : ''}`}
+              />
+            </div>
+          )}
+
+          {/* Map Selection Method */}
+          {isMapSelectionMode && (
+            <div className="map-selection-panel">
+              <div className="selection-instructions">
+                <h4>Select Your Route Points</h4>
+                <div className="instruction-step">
+                  <span className="step-number">1</span>
+                  <span className="step-text">
+                    {mapSelectionStep === 'start' 
+                      ? 'Click on the map to select your start point' 
+                      : 'Click on the map to select your end point'
+                    }
+                  </span>
+                </div>
+                {selectedStartPoint && (
+                  <div className="selected-points">
+                    <div className="point-item">
+                      <span className="point-label start">Start Point:</span>
+                      <span className="point-coords">
+                        {selectedStartPoint.lat.toFixed(6)}, {selectedStartPoint.lng.toFixed(6)}
+                      </span>
+                    </div>
+                    {selectedEndPoint && (
+                      <div className="point-item">
+                        <span className="point-label end">End Point:</span>
+                        <span className="point-coords">
+                          {selectedEndPoint.lat.toFixed(6)}, {selectedEndPoint.lng.toFixed(6)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {selectedStartPoint && selectedEndPoint && (
+                  <div className="route-ready">
+                    <p>Route ready! You can now start walking.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="input-group">
             <label htmlFor="walkingPace">Walking Pace (km/h):</label>
@@ -761,7 +957,27 @@ function App() {
                 </Marker>
               )}
               
-              <MapUpdater currentCoordinate={currentCoordinate} />
+              {/* Selected start point marker */}
+              {selectedStartPoint && (
+                <Marker
+                  position={[selectedStartPoint.lat, selectedStartPoint.lng]}
+                  icon={startIcon}
+                >
+                  <Popup>Selected Start Point</Popup>
+                </Marker>
+              )}
+              
+              {/* Selected end point marker */}
+              {selectedEndPoint && (
+                <Marker
+                  position={[selectedEndPoint.lat, selectedEndPoint.lng]}
+                  icon={endIcon}
+                >
+                  <Popup>Selected End Point</Popup>
+                </Marker>
+              )}
+              
+              <MapClickHandler onMapClick={handleMapClick} isMapSelectionMode={isMapSelectionMode} />
             </MapContainer>
           </div>
           
